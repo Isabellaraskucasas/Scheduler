@@ -1,0 +1,4 @@
+node_modules/
+data/schedule.json
+.env
+.DS_Store
