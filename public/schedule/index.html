@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schedule — IT Scheduler</title>
+  <!-- Shared base styles (typography, layout, cards, header) -->
+  <link rel="stylesheet" href="/css/shared.css">
+  <!-- Schedule-specific styles (grid, tabs, legend, report cards) -->
+  <link rel="stylesheet" href="/css/schedule.css">
+</head>
+<body>
+
+<header>
+  <h1>IT Scheduler</h1>
+  <span>// schedule view</span>
+  <nav style="margin-left:auto">
+    <a href="/admin">admin</a>
+    <a href="/student">student</a>
+    <a href="/schedule">schedule</a>
+    <!-- <a href="/hours">hours</a> -->
+  </nav>
+</header>
+
+<div class="container">
+
+  <!-- ── Toolbar ─────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="toolbar">
+      <!-- Triggers generate(); disabled during the fetch to prevent double-clicks -->
+      <button class="btn-generate" id="gen-btn" onclick="generate()">▶ Generate Schedule</button>
+      <!-- Status line: shows "Generating…", completion time, or an error message -->
+      <span class="gen-status" id="gen-status">No schedule generated yet.</span>
+    </div>
+
+    <!-- Color legend explaining grid cell backgrounds -->
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#1e3a2a"></div> Senior assigned</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--accent-dim)"></div> Student assigned</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#2a1e3a"></div> Trainee assigned</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#2a1a0a"></div> No senior coverage</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--surface)"></div> Unassigned</div>
+    </div>
+  </div>
+
+  <!-- ── Schedule grid (hidden until a schedule is generated) ────────────── -->
+  <div class="card" id="grid-card" style="display:none">
+    <h2>Weekly Schedule</h2>
+    <!-- Day-of-week tab buttons injected by renderDayTabs() -->
+    <div class="day-tabs" id="day-tabs"></div>
+    <div class="grid-scroll">
+      <!-- Time × worker grid injected by renderGrid() -->
+      <div class="schedule-grid" id="schedule-grid"></div>
+    </div>
+  </div>
+
+  <!-- ── Fairness / utilization report (hidden until generated) ─────────── -->
+  <div class="card" id="report-card" style="display:none">
+    <h2>Utilization Report</h2>
+    <!-- Summary stats (avg utilization, std deviation, worker count) -->
+    <div class="stat-row" id="stat-row"></div>
+    <!-- Per-worker utilization cards sorted by utilization % -->
+    <div class="report-grid" id="report-grid"></div>
+  </div>
+
+</div><!-- /.container -->
+
+<script>
+  // ── Constants ─────────────────────────────────────────────────────────────
+
+  const DAYS     = ["Mon","Tue","Wed","Thu","Fri"];
+  const INTERVAL = 0.25;   // 15-minute slots expressed as a fraction of an hour
+  const START    = 8;      // Operating window start (08:00)
+  const END      = 17;     // Operating window end   (17:00)
+
+  // ── State ─────────────────────────────────────────────────────────────────
+
+  let scheduleData = null;   // Full API response, stored for tab switching
+  let activeDay    = "Mon";  // Currently displayed day tab
+
+  // ── Utility helpers ───────────────────────────────────────────────────────
+
+  // Returns an array of every 15-minute slot between START and END as a float
+  // e.g. [8, 8.25, 8.5, …, 16.75]
+  // Math.round avoids floating-point drift accumulating over 36 iterations
+  function generateSlots() {
+    const slots = [];
+    let t = START;
+    while (t < END) {
+      slots.push(Math.round(t * 100) / 100);
+      t += INTERVAL;
+    }
+    return slots;
+  }
+
+  // Converts a decimal hour to a 12-hour time string, e.g. 13.5 → "1:30pm"
+  function floatToTime(f) {
+    const h    = Math.floor(f);
+    const m    = Math.round((f - h) * 60);
+    const ampm = h >= 12 ? "pm" : "am";
+    const h12  = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `${h12}:${m.toString().padStart(2, "0")}${ampm}`;
+  }
+
+  // Converts an "HH:MM" string to a decimal hour, e.g. "08:30" → 8.5
+  function timeToFloat(str) {
+    const [h, m] = str.split(":").map(Number);
+    return h + m / 60;
+  }
+
+  // Sums all availability windows for a worker across the week,
+  // then caps at their max_hours — this is their true schedulable capacity
+  function calcAvailableHours(worker) {
+    let total = 0;
+    for (const day in worker.availability) {
+      for (const range of worker.availability[day]) {
+        total += timeToFloat(range.end) - timeToFloat(range.start);
+      }
+    }
+    return Math.min(total, worker.max_hours);
+  }
+
+  // ── Schedule generation ───────────────────────────────────────────────────
+
+  // Calls the server to run the scheduling algorithm, then renders all three
+  // sections (tabs, grid, report). Disables the button during the request.
+  async function generate() {
+    const btn    = document.getElementById("gen-btn");
+    const status = document.getElementById("gen-status");
+    btn.disabled = true;
+    status.textContent = "Generating...";
+
+    try {
+      const res  = await fetch("/api/schedule/generate");
+      const data = await res.json();
+      scheduleData = data;
+
+      // Start on the first day that actually has someone assigned,
+      // falling back to Mon if the schedule is entirely empty
+      const firstDay = DAYS.find(d =>
+        Object.values(data.schedule[d] || {}).some(s => s.assigned.length > 0)
+      ) || "Mon";
+      activeDay = firstDay;
+
+      renderDayTabs();
+      renderGrid(activeDay);
+      renderReport(data.workers);
+
+      document.getElementById("grid-card").style.display   = "block";
+      document.getElementById("report-card").style.display = "block";
+
+      const flagCount = countFlags(data.flags);
+      status.textContent =
+        `Generated at ${new Date().toLocaleTimeString()} — ${flagCount} slot(s) without senior coverage`;
+
+    } catch (e) {
+      status.textContent = "Error generating schedule. Is the server running?";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Counts how many time slots across all days have the "no_senior" flag,
+  // used in the status line summary after generation
+  function countFlags(flags) {
+    let n = 0;
+    for (const day in flags)
+      for (const slot in flags[day])
+        if (flags[day][slot] === "no_senior") n++;
+    return n;
+  }
+
+  // ── Rendering: day tabs ───────────────────────────────────────────────────
+
+  // Builds the Mon/Tue/…/Fri tab strip. Clicking a tab updates activeDay
+  // and re-renders the grid for that day without re-fetching from the server.
+  function renderDayTabs() {
+    const wrap = document.getElementById("day-tabs");
+    wrap.innerHTML = "";
+
+    DAYS.forEach(day => {
+      const btn = document.createElement("button");
+      btn.className = "day-tab" + (day === activeDay ? " active" : "");
+      btn.textContent = day;
+      btn.onclick = () => {
+        activeDay = day;
+        document.querySelectorAll(".day-tab").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        renderGrid(day);
+      };
+      wrap.appendChild(btn);
+    });
+  }
+
+  // ── Rendering: schedule grid ──────────────────────────────────────────────
+
+  // Builds a CSS grid: rows = 15-min time slots, columns = one per worker
+  // who appears at least once on this day. Cells are colored by role and flag.
+  function renderGrid(day) {
+    const { schedule, flags, workers } = scheduleData;
+
+    const slots       = generateSlots();
+    const daySchedule = schedule[day] || {};
+    const dayFlags    = flags[day]    || {};
+
+    // Build an id→worker lookup for O(1) access inside the inner loop
+    const workerMap = {};
+    workers.forEach(w => { workerMap[w.id] = w; });
+
+    // Only show columns for workers who appear on this day (assigned or trainee)
+    // so the grid doesn't have empty ghost columns for workers off that day
+    const activeCols = workers.filter(w =>
+      slots.some(s => {
+        const slot = daySchedule[s];
+        if (!slot) return false;
+        return slot.assigned.includes(w.id) || slot.trainees.includes(w.id);
+      })
+    );
+
+    const grid = document.getElementById("schedule-grid");
+
+    if (activeCols.length === 0) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No one is available on ${day}.</div>`;
+      grid.style.gridTemplateColumns = "1fr";
+      return;
+    }
+
+    // 52px time label column + one flexible column per active worker
+    grid.style.gridTemplateColumns = `52px repeat(${activeCols.length}, minmax(40px, 60px))`;
+    grid.innerHTML = "";
+
+    // ── Header row ──────────────────────────────────────────────────────────
+    appendCell(grid, "header time-col", "time");
+    activeCols.forEach(w => {
+      const cell = appendCell(grid, "header", w.name);
+      cell.title = `${w.name} — ${w.role}`;  // Full name + role on hover
+      // Color the column header by role so seniors stand out at a glance
+      cell.style.color =
+        w.role === "senior"   ? "#4caf7d"        :
+        w.role === "training" ? "#b08aff"        :
+        "var(--text-dim)";
+    });
+
+    // ── Slot rows ───────────────────────────────────────────────────────────
+    slots.forEach(slot => {
+      // isHourStart is true for slots on the exact hour (e.g. 8.0, 9.0…)
+      // Used to draw a stronger grid line and show the time label
+      const isHourStart = Math.round((slot % 1) * 100) === 0;
+      const slotData    = daySchedule[slot] || { assigned: [], trainees: [] };
+      const isFlagged   = dayFlags[slot] === "no_senior";
+
+      // Time label — only shows text on hour boundaries to reduce clutter
+      const timeEl = appendCell(grid, "time-label" + (isHourStart ? " hour-start" : ""), "");
+      if (isHourStart) timeEl.textContent = floatToTime(slot);
+
+      // One cell per worker column
+      activeCols.forEach(w => {
+        const isAssigned = slotData.assigned.includes(w.id);
+        const isTrainee  = slotData.trainees.includes(w.id);
+        const present    = isAssigned || isTrainee;
+
+        // Build the CSS class string; flagged cells (no senior) override role color
+        let cls = "grid-cell" + (isHourStart ? " hour-start" : "");
+        if (present) {
+          if (isFlagged)            cls += " flagged";
+          else if (w.role === "senior")   cls += " assigned-senior";
+          else if (w.role === "training") cls += " assigned-training";
+          else                            cls += " assigned";
+        }
+
+        const cell = document.createElement("div");
+        cell.className = cls;
+
+        // If the worker is present, show their name as an initials-style badge
+        if (present) {
+          const badge = document.createElement("span");
+          badge.className = "initials " + w.role;
+          badge.textContent = w.name;
+          cell.appendChild(badge);
+        }
+
+        grid.appendChild(cell);
+      });
+    });
+  }
+
+  // Helper: creates a div with the given class and text, appends it to the
+  // grid, and returns it so the caller can set additional properties
+  function appendCell(grid, cls, text) {
+    const el = document.createElement("div");
+    el.className = "grid-cell " + cls;
+    if (text) el.textContent = text;
+    grid.appendChild(el);
+    return el;
+  }
+
+  // ── Rendering: utilization report ─────────────────────────────────────────
+
+  // Computes per-worker utilization (assigned ÷ available, capped at 100%),
+  // renders summary stats, then draws a sorted bar-chart card for each worker
+  function renderReport(workers) {
+
+    // Enrich each worker with their available hours, assigned hours, and
+    // utilization percentage; spread operator keeps all original properties
+    const breakdown = workers.map(w => {
+      const available   = calcAvailableHours(w);
+      const assigned    = w.currentHours || 0;
+      const utilization = available > 0
+        ? Math.min(100, Math.round((assigned / available) * 100))
+        : 0;
+      return { ...w, available, assigned, utilization };
+    });
+
+    // Population std deviation across utilization percentages —
+    // low std = hours are spread evenly; high std = some workers over/under-used
+    const utils = breakdown.map(b => b.utilization);
+    const mean  = utils.reduce((a, b) => a + b, 0) / utils.length;
+    const std   = Math.sqrt(
+      utils.reduce((s, u) => s + Math.pow(u - mean, 2), 0) / utils.length
+    );
+
+    // Summary stat tiles
+    document.getElementById("stat-row").innerHTML = `
+      <div class="stat">
+        <div class="stat-val">${Math.round(mean)}%</div>
+        <div class="stat-lbl">avg utilization</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" style="color:var(--text-dim)">${std.toFixed(1)}</div>
+        <div class="stat-lbl">std deviation</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" style="color:var(--text-dim)">${workers.length}</div>
+        <div class="stat-lbl">workers scheduled</div>
+      </div>
+    `;
+
+    // Per-worker cards sorted highest → lowest utilization
+    const reportGrid = document.getElementById("report-grid");
+    reportGrid.innerHTML = "";
+
+    breakdown.sort((a, b) => b.utilization - a.utilization).forEach(w => {
+      const card = document.createElement("div");
+      card.className = "report-card";
+      card.innerHTML = `
+        <div class="report-name">${w.name}</div>
+        <div class="report-role">${w.role}</div>
+        <div class="util-bar-wrap">
+          <!-- Bar width is the utilization %, CSS class controls the color by role -->
+          <div class="util-bar ${w.role}" style="width:${w.utilization}%"></div>
+        </div>
+        <div class="util-label">
+          <span>${w.utilization}%</span> — ${w.assigned.toFixed(1)}h of ${w.available.toFixed(1)}h available
+        </div>
+      `;
+      reportGrid.appendChild(card);
+    });
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,209 @@
+/* ── Schedule page — toolbar ─────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.btn-generate {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 20px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  letter-spacing: 0.3px;
+}
+
+.btn-generate:hover    { opacity: 0.85; }
+.btn-generate:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.gen-status {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── Day tabs ────────────────────────────────────────────── */
+.day-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.day-tab {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.day-tab:hover  { border-color: var(--accent); color: var(--accent); }
+.day-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── Schedule grid ───────────────────────────────────────── */
+.grid-scroll { overflow-x: auto; }
+
+.schedule-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: max-content;
+}
+
+.grid-cell {
+  background: var(--surface);
+  padding: 0;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.grid-cell.header {
+  background: var(--surface2);
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 8px 6px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.grid-cell.header.time-col { background: var(--bg); }
+
+.grid-cell.time-label {
+  background: var(--bg);
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  color: var(--text-dim);
+  padding: 0 8px;
+  justify-content: flex-end;
+  min-width: 52px;
+}
+
+.grid-cell.hour-start        { border-top: 1px solid var(--border); }
+.grid-cell.assigned          { background: var(--accent-dim); }
+.grid-cell.assigned-senior   { background: #1e3a2a; }
+.grid-cell.assigned-training { background: #2a1e3a; }
+.grid-cell.flagged           { background: #2a1a0a; }
+
+.initials {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.initials.senior   { color: #4caf7d; }
+.initials.training { color: #b08aff; }
+.initials.student  { color: var(--accent); }
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* ── Utilization report ──────────────────────────────────── */
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.report-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 12px;
+}
+
+.report-name {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.report-role {
+  font-size: 10px;
+  font-family: 'DM Mono', monospace;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.util-bar-wrap {
+  background: var(--border);
+  border-radius: 2px;
+  height: 4px;
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+
+.util-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.util-bar.senior   { background: #4caf7d; }
+.util-bar.training { background: #b08aff; }
+
+.util-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.util-label span { color: var(--text); }
+
+.stat-row {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.stat { font-family: 'DM Mono', monospace; }
+
+.stat-val {
+  font-size: 22px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.stat-lbl {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.empty-state {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 40px 0;
+  text-align: center;
+}

@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submit Availability — IT Scheduler</title>
+  <!-- Google Fonts: DM Mono for code-style text, DM Sans for UI -->
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <!-- Shared base styles (typography, layout, cards, header) -->
+  <link rel="stylesheet" href="/css/shared.css">
+</head>
+<body>
+
+<header>
+  <h1>IT Scheduler</h1>
+  <span>// availability submission</span>
+  <nav style="margin-left:auto">
+    <a href="/admin">admin</a>
+    <a href="/student">student</a>
+    <a href="/schedule">schedule</a>
+    <!-- <a href="/hours">hours</a> -->
+  </nav>
+</header>
+
+<div class="container">
+
+  <!-- ── Personal info ──────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Your Info</h2>
+    <div class="fields">
+      <div class="field">
+        <label>Full Name</label>
+        <input type="text" id="p-name" placeholder="Full Name" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Role</label>
+        <select id="p-role">
+          <option value="student">Student Analyst</option>
+          <option value="senior">Senior Student Analyst</option>
+          <option value="training">Training</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Weekly availability grid ──────────────────────────────────────── -->
+  <div class="card">
+    <h2>Weekly Availability</h2>
+
+    <!-- Quick-fill controls: clear everything or fill an entire day at once -->
+    <div class="day-controls">
+      <button class="day-btn" onclick="clearAll()">clear all</button>
+      <button class="day-btn" onclick="selectAllDay('Mon')">fill Mon</button>
+      <button class="day-btn" onclick="selectAllDay('Tue')">fill Tue</button>
+      <button class="day-btn" onclick="selectAllDay('Wed')">fill Wed</button>
+      <button class="day-btn" onclick="selectAllDay('Thu')">fill Thu</button>
+      <button class="day-btn" onclick="selectAllDay('Fri')">fill Fri</button>
+    </div>
+
+    <div class="grid-wrap">
+      <!-- Slot cells are injected here by buildGrid() -->
+      <div class="time-grid" id="time-grid"></div>
+    </div>
+
+    <!-- Visual key for selected/unselected slot colors -->
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch on"></div> Available</div>
+      <div class="legend-item"><div class="legend-swatch off"></div> Unavailable</div>
+    </div>
+
+    <!-- Live counter updated by updateSummary() on every toggle -->
+    <div class="summary" id="summary">0 slots selected — 0 hrs 0 min</div>
+  </div>
+
+  <!-- ── Submission ─────────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Submit</h2>
+    <div class="submit-row">
+      <button class="btn-submit" onclick="submitAvailability()">Submit Availability →</button>
+      <!-- Status message area; class switches between "ok" and "err" for styling -->
+      <span class="status-msg" id="status-msg"></span>
+    </div>
+  </div>
+
+</div><!-- /.container -->
+
+<script>
+  // ── Constants ─────────────────────────────────────────────────────────────
+
+  const DAYS       = ["Mon","Tue","Wed","Thu","Fri"];
+  const SLOTS      = 48;  // 8am–8pm = 12 hours × 4 slots/hr (15 min each)
+  const START_HOUR = 8;   // Grid starts at 08:00
+
+  // ── State ─────────────────────────────────────────────────────────────────
+
+  // selected[day][slotIndex] = true/false — single source of truth for which
+  // cells are highlighted; DOM classes are kept in sync via toggleSlot()
+  const selected = {};
+  DAYS.forEach(d => { selected[d] = new Array(SLOTS).fill(false); });
+
+  // Drag state: set on mousedown, cleared on mouseup, read on mouseenter
+  let isDragging = false;
+  let dragValue  = true;   // The value being painted during the current drag
+
+  // ── Time helpers ──────────────────────────────────────────────────────────
+
+  // Converts a slot index to a 12-hour display string, e.g. slot 4 → "9:00am"
+  function slotToTime(slotIndex) {
+    const totalMins = START_HOUR * 60 + slotIndex * 15;
+    const h    = Math.floor(totalMins / 60);
+    const m    = totalMins % 60;
+    const ampm = h >= 12 ? "pm" : "am";
+    const h12  = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `${h12}:${m.toString().padStart(2, "0")}${ampm}`;
+  }
+
+  // Converts a slot index to "HH:MM" (24-hour) for the JSON payload,
+  // e.g. slot 6 → "09:30"
+  function slotToISO(slotIndex) {
+    const totalMins = START_HOUR * 60 + slotIndex * 15;
+    const h = Math.floor(totalMins / 60).toString().padStart(2, "0");
+    const m = (totalMins % 60).toString().padStart(2, "0");
+    return `${h}:${m}`;
+  }
+
+  // ── Grid construction ─────────────────────────────────────────────────────
+
+  // Builds the full time × day grid:
+  //   Row 0:    empty corner + one time-label per slot (header)
+  //   Rows 1-5: day label + one clickable slot cell per time column
+  // Attaches mousedown/mouseenter listeners for click-and-drag selection.
+  function buildGrid() {
+    const grid = document.getElementById("time-grid");
+    grid.innerHTML = "";
+
+    // Top-left corner spacer (aligns time labels above day rows)
+    const corner = document.createElement("div");
+    corner.className = "corner";
+    grid.appendChild(corner);
+
+    // Time label row — only show text on the hour (every 4th slot) to avoid crowding
+    for (let s = 0; s < SLOTS; s++) {
+      const lbl = document.createElement("div");
+      lbl.className = "time-label";
+      if (s % 4 === 0) lbl.textContent = slotToTime(s).replace(":00", "");
+      grid.appendChild(lbl);
+    }
+
+    // One row per day
+    DAYS.forEach(day => {
+      // Day name label in the leftmost column
+      const dayLbl = document.createElement("div");
+      dayLbl.className = "day-label";
+      dayLbl.textContent = day;
+      grid.appendChild(dayLbl);
+
+      // Slot cells for this day
+      for (let s = 0; s < SLOTS; s++) {
+        const slot = document.createElement("div");
+        // "hour-start" adds a stronger left border at each full hour
+        slot.className = "slot" + (s % 4 === 0 ? " hour-start" : "");
+        slot.dataset.day  = day;
+        slot.dataset.slot = s;
+        slot.title = `${day} ${slotToTime(s)}`;   // Tooltip on hover
+
+        // Restore selected state if the grid is ever rebuilt mid-session
+        if (selected[day][s]) slot.classList.add("selected");
+
+        // mousedown: start a drag and set dragValue to the opposite of the
+        // clicked cell's current state (so clicking "on" drags to off, and vice versa)
+        slot.addEventListener("mousedown", (e) => {
+          e.preventDefault();  // Prevent text selection while dragging
+          isDragging = true;
+          dragValue  = !selected[day][s];
+          toggleSlot(day, s);
+        });
+
+        // mouseenter: if a drag is in progress, paint this cell with dragValue
+        slot.addEventListener("mouseenter", () => {
+          if (isDragging) toggleSlot(day, s, dragValue);
+        });
+
+        grid.appendChild(slot);
+      }
+    });
+
+    // End the drag when the mouse button is released anywhere on the page
+    document.addEventListener("mouseup", () => { isDragging = false; });
+  }
+
+  // ── Slot toggling ─────────────────────────────────────────────────────────
+
+  // Updates selected[day][slotIdx] and the matching DOM cell's "selected" class.
+  // forceTo: if provided, sets to that value instead of toggling — used during drags
+  function toggleSlot(day, slotIdx, forceTo) {
+    const val = forceTo !== undefined ? forceTo : !selected[day][slotIdx];
+    selected[day][slotIdx] = val;
+    const slotEl = document.querySelector(`.slot[data-day="${day}"][data-slot="${slotIdx}"]`);
+    if (slotEl) slotEl.classList.toggle("selected", val);
+    updateSummary();
+  }
+
+  // Marks every slot in a day as selected (used by the "fill Day" buttons)
+  function selectAllDay(day) {
+    for (let s = 0; s < SLOTS; s++) {
+      selected[day][s] = true;
+      const el = document.querySelector(`.slot[data-day="${day}"][data-slot="${s}"]`);
+      if (el) el.classList.add("selected");
+    }
+    updateSummary();
+  }
+
+  // Deselects every slot across all days (used by the "clear all" button)
+  function clearAll() {
+    DAYS.forEach(day => {
+      for (let s = 0; s < SLOTS; s++) {
+        selected[day][s] = false;
+        const el = document.querySelector(`.slot[data-day="${day}"][data-slot="${s}"]`);
+        if (el) el.classList.remove("selected");
+      }
+    });
+    updateSummary();
+  }
+
+  // ── Calculations ──────────────────────────────────────────────────────────
+
+  // Returns total selected hours as a decimal (each slot = 0.25 hr)
+  // Used to compute available_hours for the API payload
+  function calcAvailableHours() {
+    let total = 0;
+    DAYS.forEach(d => { total += selected[d].filter(Boolean).length; });
+    return total * 0.25;
+  }
+
+  // Refreshes the "X slots selected — Y hrs Z min" line beneath the grid
+  function updateSummary() {
+    let total = 0;
+    DAYS.forEach(d => { total += selected[d].filter(Boolean).length; });
+    const mins = total * 15;
+    const hrs  = Math.floor(mins / 60);
+    const rem  = mins % 60;
+    document.getElementById("summary").innerHTML =
+      `<span>${total}</span> slots selected — <span>${hrs}</span> hrs <span>${rem}</span> min`;
+  }
+
+  // ── Payload builder ───────────────────────────────────────────────────────
+
+  // Converts the flat boolean arrays in `selected` into the compact range format
+  // expected by the API: { "Mon": [{ start: "08:00", end: "10:00" }, …], … }
+  //
+  // Algorithm: single pass per day, tracking when a contiguous "on" run starts
+  // and ends. Iterates to s = SLOTS (one past the end) so a run reaching the
+  // final slot is always closed.
+  function buildAvailabilityPayload() {
+    const availability = {};
+
+    DAYS.forEach(day => {
+      const ranges = [];
+      let rangeStart = null;
+
+      for (let s = 0; s <= SLOTS; s++) {
+        const on = s < SLOTS && selected[day][s];
+
+        if (on && rangeStart === null) {
+          // Start of a new contiguous run
+          rangeStart = s;
+        } else if (!on && rangeStart !== null) {
+          // End of the run — push the completed range and reset
+          ranges.push({ start: slotToISO(rangeStart), end: slotToISO(s) });
+          rangeStart = null;
+        }
+      }
+
+      // Only include days that have at least one selected range
+      if (ranges.length > 0) availability[day] = ranges;
+    });
+
+    return availability;
+  }
+
+  // ── Submission ────────────────────────────────────────────────────────────
+
+  // Validates inputs, POSTs the availability payload, and handles success/error.
+  // available_hours is derived from the grid — not user-entered — to keep it
+  // consistent with what was actually selected.
+  async function submitAvailability() {
+    const name = document.getElementById("p-name").value.trim();
+    const role = document.getElementById("p-role").value;
+
+    if (!name) { showStatus("Name is required.", "err"); return; }
+
+    const availability = buildAvailabilityPayload();
+    if (Object.keys(availability).length === 0) {
+      showStatus("Select at least one available slot.", "err");
+      return;
+    }
+
+    const available_hours = calcAvailableHours();
+
+    const btn = document.querySelector(".btn-submit");
+    btn.disabled = true;
+    showStatus("Submitting...", "");
+
+    try {
+      const res = await fetch("/api/availability", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ name, role, available_hours, availability })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        showStatus("✓ Availability saved!", "ok");
+        // Reset the form so the page is ready for the next person
+        clearAll();
+        document.getElementById("p-name").value = "";
+      } else {
+        showStatus("Error: " + (data.error || "Unknown error"), "err");
+      }
+    } catch (err) {
+      showStatus("Could not reach server.", "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Sets the status message text and CSS class ("ok" = green, "err" = red, "" = neutral)
+  function showStatus(msg, type) {
+    const el = document.getElementById("status-msg");
+    el.textContent = msg;
+    el.className   = "status-msg " + type;
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+
+  // Build the grid immediately on page load
+  buildGrid();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin — IT Scheduler</title>
+  <!-- Google Fonts: DM Mono for code-style text, DM Sans for UI -->
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <!-- Shared styles used across all pages (student form, hours log, admin) -->
+  <link rel="stylesheet" href="/css/shared.css">
+</head>
+<body>
+
+<header>
+  <h1>IT Scheduler</h1>
+  <span>// admin view</span>
+  <!-- Top navigation links to the three main pages -->
+  <nav style="margin-left:auto">
+    <a href="/admin">admin</a>
+    <a href="/student">student</a>
+    <a href="/schedule">schedule</a>
+    <!-- <a href="/hours">hours</a> -->
+  </nav>
+</header>
+
+<div class="container">
+  <div class="card">
+    <!-- Heading with a live count of how many people have submitted availability -->
+    <h2>People — <span id="count">0</span> submitted</h2>
+    <!-- People table is injected here by load() -->
+    <div id="people-wrap"><p class="empty">Loading...</p></div>
+  </div>
+</div>
+
+<script>
+  // Fetches all submitted people from the API and renders them as a table
+  async function load() {
+    const res  = await fetch("/api/people");
+    const data = await res.json();
+
+    // Update the submission count in the heading
+    document.getElementById("count").textContent = data.people.length;
+
+    const wrap = document.getElementById("people-wrap");
+
+    // If nobody has submitted yet, show an empty-state message and stop
+    if (data.people.length === 0) {
+      wrap.innerHTML = '<p class="empty">No availability submitted yet.</p>';
+      return;
+    }
+
+    // Build the table header
+    let html = '<table><thead><tr><th>Name</th><th>Role</th><th>Max Hrs</th><th>Availability</th><th></th></tr></thead><tbody>';
+
+    data.people.forEach(p => {
+      // Role badge — CSS class ("badge-student" or "badge-senior") controls the color
+      const badge = `<span class="badge badge-${p.role}">${p.role}</span>`;
+
+      // Format each day's availability as "Day: HH:MM–HH:MM"
+      // A person can have multiple ranges per day, joined by ", "
+      const avail = Object.entries(p.availability).map(([day, ranges]) => {
+        const rangeStr = ranges.map(r => `${r.start}–${r.end}`).join(", ");
+        return `<div class="avail-day">${day}: <span>${rangeStr}</span></div>`;
+      }).join("");
+
+      // Build one table row per person; escape the name to prevent XSS
+      html += `<tr>
+        <td>${esc(p.name)}</td>
+        <td>${badge}</td>
+        <td>${p.max_hours}h</td>
+        <td>${avail}</td>
+        <!-- Remove button calls deletePerson with this person's unique ID -->
+        <td><button class="btn-del" onclick="deletePerson('${p.id}')">remove</button></td>
+      </tr>`;
+    });
+
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  // Asks for confirmation, then sends a DELETE request for the given person ID
+  // and reloads the table to reflect the removal
+  async function deletePerson(id) {
+    if (!confirm("Remove this person?")) return;
+    await fetch(`/api/people/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  // Escapes HTML special characters in user-supplied strings to prevent XSS
+  // Covers the three characters that can break out of HTML context: & < >
+  function esc(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // Kick off the initial load when the page is ready
+  load();
+</script>
+
+</body>
+</html>
