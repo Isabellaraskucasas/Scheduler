@@ -1,4 +1,4 @@
 node_modules/
 data/schedule.json
 .env
-.DS_Storedata/schedule.json
+.DS_Store
